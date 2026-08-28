@@ -32,14 +32,18 @@ GitHub Actions (OIDC) → IAM Role → S3 (static files) ← CloudFront (CDN) �
 
 ## GitHub Variables vs Secrets
 
-This project uses GitHub **environment variables** (`vars.*`) for most configuration and **secrets** (`secrets.*`) only for sensitive values.
+This project uses GitHub **environment variables** (`vars.*`) for all configuration. Variables are scoped to a **GitHub environment** (e.g. `staging`, `prod`). The workflow job must declare `environment: <name>` to access them.
 
-| Type | Syntax | Use for |
+### Current staging environment variables
+
+| Variable | Value | Used by |
 |---|---|---|
-| Environment variables | `${{ vars.NAME }}` | Region, bucket names, role ARNs, API URLs |
-| Secrets | `${{ secrets.NAME }}` | Sensitive tokens, distribution IDs |
-
-Variables are scoped to a **GitHub environment** (e.g. `staging`, `prod`). The workflow job must declare `environment: <name>` to access them.
+| `AWS_REGION` | `ap-southeast-1` | All workflows |
+| `STAGING_AWS_ROLE_ARN` | `arn:aws:iam::627290889286:role/adventus_staging_fe` | Deploy + Terraform |
+| `STAGING_S3_BUCKET` | `adventus-fe-staging-bucket` | Deploy |
+| `STAGING_API_BASE_URL` | `http://adventus-staging-alb-...elb.amazonaws.com/api` | Deploy (build) |
+| `STAGING_CLOUDFRONT_DISTRIBUTION_ID` | *(set after Terraform apply)* | Deploy |
+| `TF_STATE_BUCKET` | `adventus-tf-state-fe` | Terraform |
 
 ## Remote State Bootstrap
 
@@ -180,18 +184,16 @@ gh variable set PROD_API_BASE_URL --body "https://api.example.com/api" --env pro
 gh variable set AWS_REGION --body "ap-southeast-1" --env prod
 ```
 
-### Terraform workflow secrets (set manually)
+### Terraform workflow variables
 
-These are for the Terraform GitHub Actions workflows themselves:
+The Terraform workflows reuse the same IAM role as the deploy workflows and need the state bucket:
 
 ```bash
-gh secret set TF_STAGING_AWS_ROLE_ARN --body "arn:aws:iam::627290889286:role/YOUR-tf-staging-admin-role"
-gh secret set TF_PROD_AWS_ROLE_ARN --body "arn:aws:iam::627290889286:role/YOUR-tf-prod-admin-role"
-gh secret set TF_STATE_BUCKET --body "YOUR-terraform-state-bucket"
-gh secret set TF_LOCK_TABLE --body "YOUR-terraform-lock-table"
+gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env staging
+gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env prod
 ```
 
-> The `TF_*_AWS_ROLE_ARN` roles need admin-level permissions to create and manage IAM, S3, CloudFront, and Secrets Manager resources. These are separate from the deploy roles that Terraform creates.
+> The `STAGING_AWS_ROLE_ARN` / `PROD_AWS_ROLE_ARN` roles are shared between deploy and Terraform workflows. They need permissions to create/manage IAM, S3, CloudFront, and Secrets Manager resources.
 
 ## Deployment Flow
 
@@ -236,15 +238,15 @@ Infrastructure changes can be managed from GitHub Actions without running Terraf
 | `apply` | Apply changes to the environment (creates/updates resources) |
 | `destroy` | Tear down all resources in the environment |
 
-### Required secrets
+### Required environment variables
 
-| Secret | Purpose |
+All values are stored as **environment variables** (`vars.*`) under each GitHub environment (`staging` / `prod`):
+
+| Variable | Purpose |
 |---|---|
-| `TF_STAGING_AWS_ROLE_ARN` | IAM role for managing staging infrastructure |
-| `TF_PROD_AWS_ROLE_ARN` | IAM role for managing production infrastructure |
-| `TF_STATE_BUCKET` | S3 bucket for Terraform remote state |
-| `TF_LOCK_TABLE` | DynamoDB table for state locking |
-| `AWS_REGION` | AWS region (shared, set as environment variable) |
+| `STAGING_AWS_ROLE_ARN` / `PROD_AWS_ROLE_ARN` | IAM role (shared with deploy workflow) |
+| `TF_STATE_BUCKET` | S3 bucket for Terraform remote state (`adventus-tf-state-fe`) |
+| `AWS_REGION` | AWS region (`ap-southeast-1`) |
 
 ## Teardown
 
