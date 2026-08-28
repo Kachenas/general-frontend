@@ -27,8 +27,19 @@ GitHub Actions (OIDC) → IAM Role → S3 (static files) ← CloudFront (CDN) �
 
 1. **AWS CLI** configured with admin credentials (for bootstrapping only)
 2. **Terraform** >= 1.5 installed locally
-3. **GitHub CLI** (`gh`) for setting repository secrets
+3. **GitHub CLI** (`gh`) for setting repository variables
 4. An AWS account with permissions to create IAM, S3, CloudFront, and Secrets Manager resources
+
+## GitHub Variables vs Secrets
+
+This project uses GitHub **environment variables** (`vars.*`) for most configuration and **secrets** (`secrets.*`) only for sensitive values.
+
+| Type | Syntax | Use for |
+|---|---|---|
+| Environment variables | `${{ vars.NAME }}` | Region, bucket names, role ARNs, API URLs |
+| Secrets | `${{ secrets.NAME }}` | Sensitive tokens, distribution IDs |
+
+Variables are scoped to a **GitHub environment** (e.g. `staging`, `prod`). The workflow job must declare `environment: <name>` to access them.
 
 ## Remote State Bootstrap
 
@@ -38,7 +49,8 @@ Before running Terraform, create the S3 bucket and DynamoDB table for remote sta
 # Create state bucket
 aws s3api create-bucket \
   --bucket YOUR-terraform-state-bucket \
-  --region us-east-1
+  --region ap-southeast-1 \
+  --create-bucket-configuration LocationConstraint=ap-southeast-1
 
 aws s3api put-bucket-versioning \
   --bucket YOUR-terraform-state-bucket \
@@ -60,8 +72,10 @@ aws dynamodb create-table \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
   --key-schema AttributeName=LockID,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST \
-  --region us-east-1
+  --region ap-southeast-1
 ```
+
+> **Note:** For regions other than `us-east-1`, the `--create-bucket-configuration LocationConstraint=<region>` flag is required when creating S3 buckets.
 
 ## Init / Plan / Apply
 
@@ -74,7 +88,7 @@ All commands run from the `terraform/` directory.
 terraform init \
   -backend-config="bucket=YOUR-terraform-state-bucket" \
   -backend-config="key=frontend/staging/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
+  -backend-config="region=ap-southeast-1" \
   -backend-config="dynamodb_table=YOUR-terraform-lock-table" \
   -backend-config="encrypt=true"
 
@@ -82,7 +96,7 @@ terraform init \
 terraform init -reconfigure \
   -backend-config="bucket=YOUR-terraform-state-bucket" \
   -backend-config="key=frontend/prod/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
+  -backend-config="region=ap-southeast-1" \
   -backend-config="dynamodb_table=YOUR-terraform-lock-table" \
   -backend-config="encrypt=true"
 ```
@@ -125,11 +139,22 @@ After `terraform apply`, these resources exist in your AWS account:
 
 No long-lived AWS keys are stored in GitHub — credentials are ephemeral and scoped.
 
-## Configuring GitHub Secrets
+### OIDC Sub Claim Format
 
-After applying Terraform for each environment, set the GitHub secrets referenced by the deploy workflows.
+When a workflow uses a GitHub **environment**, the `sub` claim format changes:
 
-### Deploy workflow secrets (from Terraform outputs)
+| Workflow config | `sub` claim format |
+|---|---|
+| No `environment:` | `repo:Kachenas/general-frontend:ref:refs/heads/staging` |
+| With `environment: staging` | `repo:Kachenas/general-frontend:environment:staging` |
+
+The IAM trust policy `Condition` must match whichever format applies. See [docs/troubleshooting.md](troubleshooting.md) for debugging steps.
+
+## Configuring GitHub Variables
+
+After applying Terraform for each environment, set the GitHub environment variables referenced by the deploy workflows.
+
+### Deploy workflow variables (from Terraform outputs)
 
 ```bash
 cd terraform
@@ -137,23 +162,22 @@ cd terraform
 # Initialize for staging
 terraform init -backend-config="..." # see Init section
 
-# Set staging secrets
-gh secret set STAGING_AWS_ROLE_ARN --body "$(terraform output -raw iam_role_arn)"
-gh secret set STAGING_S3_BUCKET --body "$(terraform output -raw s3_bucket_name)"
-gh secret set STAGING_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -raw cloudfront_distribution_id)"
-gh secret set STAGING_API_BASE_URL --body "https://staging-api.example.com/api"
+# Set staging variables (under the "staging" GitHub environment)
+gh variable set STAGING_AWS_ROLE_ARN --body "$(terraform output -raw iam_role_arn)" --env staging
+gh variable set STAGING_S3_BUCKET --body "$(terraform output -raw s3_bucket_name)" --env staging
+gh variable set STAGING_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -raw cloudfront_distribution_id)" --env staging
+gh variable set STAGING_API_BASE_URL --body "http://adventus-staging-alb-1170099516.ap-southeast-1.elb.amazonaws.com/api" --env staging
+gh variable set AWS_REGION --body "ap-southeast-1" --env staging
 
 # Switch to prod
 terraform init -reconfigure -backend-config="..." # see Init section
 
-# Set prod secrets
-gh secret set PROD_AWS_ROLE_ARN --body "$(terraform output -raw iam_role_arn)"
-gh secret set PROD_S3_BUCKET --body "$(terraform output -raw s3_bucket_name)"
-gh secret set PROD_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -raw cloudfront_distribution_id)"
-gh secret set PROD_API_BASE_URL --body "https://api.example.com/api"
-
-# Shared
-gh secret set AWS_REGION --body "us-east-1"
+# Set prod variables (under the "prod" GitHub environment)
+gh variable set PROD_AWS_ROLE_ARN --body "$(terraform output -raw iam_role_arn)" --env prod
+gh variable set PROD_S3_BUCKET --body "$(terraform output -raw s3_bucket_name)" --env prod
+gh variable set PROD_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -raw cloudfront_distribution_id)" --env prod
+gh variable set PROD_API_BASE_URL --body "https://api.example.com/api" --env prod
+gh variable set AWS_REGION --body "ap-southeast-1" --env prod
 ```
 
 ### Terraform workflow secrets (set manually)
@@ -161,8 +185,8 @@ gh secret set AWS_REGION --body "us-east-1"
 These are for the Terraform GitHub Actions workflows themselves:
 
 ```bash
-gh secret set TF_STAGING_AWS_ROLE_ARN --body "arn:aws:iam::ACCOUNT_ID:role/YOUR-tf-staging-admin-role"
-gh secret set TF_PROD_AWS_ROLE_ARN --body "arn:aws:iam::ACCOUNT_ID:role/YOUR-tf-prod-admin-role"
+gh secret set TF_STAGING_AWS_ROLE_ARN --body "arn:aws:iam::627290889286:role/YOUR-tf-staging-admin-role"
+gh secret set TF_PROD_AWS_ROLE_ARN --body "arn:aws:iam::627290889286:role/YOUR-tf-prod-admin-role"
 gh secret set TF_STATE_BUCKET --body "YOUR-terraform-state-bucket"
 gh secret set TF_LOCK_TABLE --body "YOUR-terraform-lock-table"
 ```
@@ -177,7 +201,7 @@ gh secret set TF_LOCK_TABLE --body "YOUR-terraform-lock-table"
 2. Create Terraform admin IAM roles for staging and prod
 3. Set `TF_*` GitHub secrets
 4. Run `terraform apply -var-file=staging.tfvars`
-5. Set deploy workflow secrets from Terraform outputs
+5. Create GitHub environments (`staging`, `prod`) and set variables from Terraform outputs
 6. Push to `staging` branch — deploy workflow runs automatically
 
 ### Ongoing deployments
@@ -185,12 +209,13 @@ gh secret set TF_LOCK_TABLE --body "YOUR-terraform-lock-table"
 ```
 Push to staging branch
   → GitHub Actions triggers deploy-staging.yml
+  → Job loads "staging" environment variables
   → OIDC authenticates → assumes IAM role
   → npm ci → npm run build (with VITE_API_BASE_URL)
   → aws s3 sync dist/ → CloudFront invalidation
 ```
 
-Production follows the same flow on the `production` branch.
+Production follows the same flow on the `production` branch with the `prod` environment.
 
 ## Terraform Workflows
 
@@ -219,7 +244,7 @@ Infrastructure changes can be managed from GitHub Actions without running Terraf
 | `TF_PROD_AWS_ROLE_ARN` | IAM role for managing production infrastructure |
 | `TF_STATE_BUCKET` | S3 bucket for Terraform remote state |
 | `TF_LOCK_TABLE` | DynamoDB table for state locking |
-| `AWS_REGION` | AWS region (shared with deploy workflows) |
+| `AWS_REGION` | AWS region (shared, set as environment variable) |
 
 ## Teardown
 
