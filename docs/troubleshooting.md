@@ -77,28 +77,40 @@ Error: Could not assume role with OIDC: Not authorized to perform sts:AssumeRole
 
 **Cause:** The IAM role's trust policy does not match the OIDC token's `sub` claim.
 
-**Key detail:** When a workflow job declares `environment: staging`, the `sub` claim format changes:
+**Key detail 1 — Numeric IDs in sub claim:** GitHub's OIDC tokens include numeric user/repo IDs in the `sub` claim:
 
-| Workflow config | `sub` claim |
+```
+# Expected (old format):
+repo:Kachenas/general-frontend:environment:staging
+
+# Actual (current format):
+repo:Kachenas@34016103/general-frontend@1349557226:environment:staging
+```
+
+If your trust policy uses `repo:Kachenas/general-frontend:*`, it will NOT match `repo:Kachenas@34016103/general-frontend@1349557226:*`.
+
+**Key detail 2 — Environment changes the suffix:** When a workflow job declares `environment: staging`, the `sub` claim suffix changes:
+
+| Workflow config | `sub` claim suffix |
 |---|---|
-| No `environment:` | `repo:Kachenas/general-frontend:ref:refs/heads/staging` |
-| With `environment: staging` | `repo:Kachenas/general-frontend:environment:staging` |
+| No `environment:` | `:ref:refs/heads/staging` |
+| With `environment: staging` | `:environment:staging` |
 
-**Fix:** Update the IAM trust policy `Condition` to match the actual `sub` claim format.
-
-For environment-based workflows:
+**Fix:** Update the IAM trust policy `Condition` to use the full sub claim prefix with numeric IDs:
 
 ```json
 {
   "Condition": {
     "StringLike": {
-      "token.actions.githubusercontent.com:sub": "repo:Kachenas/general-frontend:*"
+      "token.actions.githubusercontent.com:sub": "repo:Kachenas@34016103/general-frontend@1349557226:*"
     }
   }
 }
 ```
 
-Using `:*` as a wildcard matches both formats.
+Using `:*` as a wildcard matches both environment and branch ref formats.
+
+To find your numeric IDs, use the debug OIDC step below and look at the `sub` field.
 
 **Debugging:** Add this step before the AWS credentials step to inspect the actual OIDC token claims:
 

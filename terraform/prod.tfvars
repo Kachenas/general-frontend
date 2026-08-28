@@ -1,6 +1,7 @@
 environment          = "prod"
 aws_region           = "ap-southeast-1"
 github_org_repo      = "Kachenas/general-frontend"
+github_oidc_sub      = "repo:Kachenas@34016103/general-frontend@1349557226"
 github_branch        = "production"
 bucket_name          = "adventus-fe-prod-bucket"
 api_base_url         = "https://api.example.com/api"

@@ -19,6 +19,11 @@ variable "github_org_repo" {
   type        = string
 }
 
+variable "github_oidc_sub" {
+  description = "OIDC sub claim prefix including numeric IDs (e.g. 'repo:Org@123/repo@456'). Get this from the debug OIDC step in the workflow."
+  type        = string
+}
+
 variable "github_branch" {
   description = "Branch allowed to assume the deploy role"
   type        = string
