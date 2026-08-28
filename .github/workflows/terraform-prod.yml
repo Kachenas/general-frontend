@@ -25,6 +25,7 @@ jobs:
   terraform:
     name: Terraform ${{ github.event.inputs.action }} (prod)
     runs-on: ubuntu-latest
+    environment: prod
 
     defaults:
       run:
@@ -50,7 +51,7 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=${{ env.TF_STATE_KEY }}" \
-            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}" \
             -backend-config="encrypt=true"
 
