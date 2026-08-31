@@ -16,12 +16,63 @@ GitHub Actions (OIDC) → IAM Role → S3 (static files) ← CloudFront (CDN) �
 
 | Resource | Purpose |
 |---|---|
-| GitHub OIDC Provider | Federated identity for GitHub Actions |
 | IAM Role + Policies | Scoped permissions for deploy workflows |
 | S3 Bucket | Static site storage (public access blocked) |
 | CloudFront Distribution | CDN with OAC, HTTPS, SPA routing |
 | CloudFront OAC | Secure S3 access (replaces legacy OAI) |
 | Secrets Manager Secret | Stores `api_base_url` for CI/CD |
+
+The GitHub OIDC provider (`token.actions.githubusercontent.com`) is **not** Terraform-managed — it's read via a data source (`oidc.tf`) and is created once, manually, as an account prerequisite. See [Setup Checklist](#setup-checklist).
+
+## Setup Checklist
+
+Step-by-step for standing up a new environment (or the reference for how `staging` was actually set up). Each step is tagged **(manual)** — AWS Console/CLI, outside Terraform — **(GitHub)** — `gh variable set` / environment creation — or **(terraform)** — `terraform apply`.
+
+### Part 1 — One-time, per AWS account (not per environment)
+
+1. **(manual)** Create the Terraform remote-state bucket and DynamoDB lock table. See [Remote State Bootstrap](#remote-state-bootstrap).
+   - `adventus-tf-state-fe` (S3, versioned + encrypted)
+   - `adventus-tf-lock-fe` (DynamoDB, partition key `LockID`)
+2. **(manual)** Check IAM → Identity providers for an existing `token.actions.githubusercontent.com` OIDC provider. Terraform never creates or deletes this (`oidc.tf` only reads it via a data source) — if it's missing, create it once per account:
+   ```bash
+   aws iam create-open-id-connect-provider \
+     --url https://token.actions.githubusercontent.com \
+     --client-id-list sts.amazonaws.com \
+     --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+   ```
+   For this account it already existed before Terraform was introduced, so no action was needed beyond confirming it's there.
+
+### Part 2 — Per environment (repeat for `staging`, then `prod`)
+
+3. **(GitHub)** Create the GitHub environment: Settings → Environments → New environment (`staging` or `prod`).
+4. **(GitHub)** Set the variables the Terraform CI workflow needs *before* it can run at all:
+   - `AWS_REGION` = `ap-southeast-1`
+   - `TF_STATE_BUCKET` = `adventus-tf-state-fe`
+   - `TF_LOCK_TABLE` = `adventus-tf-lock-fe`
+5. **(terraform, run locally)** The IAM role GitHub Actions would assume doesn't exist yet on a first-ever apply, so `{ENV}_AWS_ROLE_ARN` can't be set in GitHub yet either — the first `apply` per environment has to run from your machine with admin AWS credentials, not from CI:
+   ```bash
+   cd terraform
+   terraform init -reconfigure \
+     -backend-config="bucket=adventus-tf-state-fe" \
+     -backend-config="key=frontend/staging/terraform.tfstate" \
+     -backend-config="region=ap-southeast-1" \
+     -backend-config="dynamodb_table=adventus-tf-lock-fe" \
+     -backend-config="encrypt=true"
+   terraform plan -var-file=staging.tfvars   # review before applying
+   terraform apply -var-file=staging.tfvars
+   ```
+   > **Don't pre-create the site S3 bucket manually before this step.** It's fully Terraform-managed (`s3.tf` → `aws_s3_bucket.site`) — a bucket that already exists under the same name will make `apply` fail with `BucketAlreadyOwnedByYou`, same as it did here.
+6. **(manual)** Attach the state-backend access policy to the role `apply` just created, so future CI-triggered `plan`/`apply` runs for this environment can read/lock state. See [State Backend IAM Permissions](#state-backend-iam-permissions-gap--not-yet-in-terraform) — this is currently a manual step, not yet code.
+7. **(GitHub)** Now that the role, S3 bucket, and CloudFront distribution exist, fill in the rest of the environment's variables from Terraform outputs:
+   - `{ENV}_AWS_ROLE_ARN` = `terraform output -raw iam_role_arn`
+   - `{ENV}_S3_BUCKET` = `terraform output -raw s3_bucket_name`
+   - `{ENV}_CLOUDFRONT_DISTRIBUTION_ID` = `terraform output -raw cloudfront_distribution_id`
+   - `{ENV}_API_BASE_URL` = the backend API URL for that environment
+8. **(GitHub)** Push to the environment's branch (`staging` or `production`). The deploy workflow now has everything it needs and runs automatically.
+
+### Known open item
+
+The IAM role that Terraform creates (`frontend-{env}-github-actions`, `iam.tf:28`) is a different name than the role currently referenced by `STAGING_AWS_ROLE_ARN` (`adventus_staging_fe`), which was set up manually before this Terraform config existed. Decide whether to (a) let Terraform's role take over and repoint the GitHub variable at it, or (b) rename `iam.tf`'s role to match and `terraform import` the existing one — not yet resolved.
 
 ## Prerequisites
 
@@ -171,7 +222,6 @@ After `terraform apply`, these resources exist in your AWS account:
 
 | Resource | Name Pattern |
 |---|---|
-| IAM OIDC Provider | `token.actions.githubusercontent.com` |
 | IAM Role | `frontend-{env}-github-actions` |
 | S3 Bucket | Value of `bucket_name` variable |
 | CloudFront Distribution | `frontend-{env}` (comment) |

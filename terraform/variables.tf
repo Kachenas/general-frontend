@@ -39,12 +39,6 @@ variable "api_base_url" {
   type        = string
 }
 
-variable "create_oidc_provider" {
-  description = "Whether to create the GitHub OIDC provider (set false if it already exists in the account)"
-  type        = bool
-  default     = true
-}
-
 variable "custom_domain" {
   description = "Optional custom domain for CloudFront (e.g. 'app.example.com')"
   type        = string
