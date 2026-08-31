@@ -44,10 +44,25 @@ This project uses GitHub **environment variables** (`vars.*`) for all configurat
 | `STAGING_API_BASE_URL` | `http://adventus-staging-alb-...elb.amazonaws.com/api` | Deploy (build) |
 | `STAGING_CLOUDFRONT_DISTRIBUTION_ID` | *(set after Terraform apply)* | Deploy |
 | `TF_STATE_BUCKET` | `adventus-tf-state-fe` | Terraform |
+| `TF_LOCK_TABLE` | `adventus-tf-lock-fe` | Terraform |
+
+### Current prod environment variables
+
+| Variable | Value | Used by |
+|---|---|---|
+| `AWS_REGION` | `ap-southeast-1` | All workflows |
+| `PROD_AWS_ROLE_ARN` | *(set after Terraform apply)* | Deploy + Terraform |
+| `PROD_S3_BUCKET` | *(set after Terraform apply)* | Deploy |
+| `PROD_API_BASE_URL` | `https://api.example.com/api` | Deploy (build) |
+| `PROD_CLOUDFRONT_DISTRIBUTION_ID` | *(set after Terraform apply)* | Deploy |
+| `TF_STATE_BUCKET` | `adventus-tf-state-fe` | Terraform |
+| `TF_LOCK_TABLE` | `adventus-tf-lock-fe` | Terraform |
 
 ## Remote State Bootstrap
 
-Before running Terraform, create the S3 bucket and DynamoDB table for remote state. This is a one-time setup per AWS account.
+Before running Terraform, create the S3 bucket and DynamoDB table for remote state. This is a one-time setup per AWS account, done manually (AWS Console or CLI) — Terraform can't provision its own backend, since `terraform init` needs the bucket and lock table to already exist before it can store state anywhere.
+
+The DynamoDB table (`TF_LOCK_TABLE`) exists purely to prevent concurrent writes: whenever `terraform plan`/`apply` runs, it writes a lock record keyed on `LockID` into this table for the duration of the run, so a second run (another CI trigger, or a teammate applying locally) fails fast with a "state locked" error instead of two processes corrupting `terraform.tfstate` at once. It's on-demand billing (`PAY_PER_REQUEST`), so cost is negligible.
 
 ```bash
 # Create state bucket
@@ -80,6 +95,37 @@ aws dynamodb create-table \
 ```
 
 > **Note:** For regions other than `us-east-1`, the `--create-bucket-configuration LocationConstraint=<region>` flag is required when creating S3 buckets.
+
+### State Backend IAM Permissions (gap — not yet in Terraform)
+
+The `frontend-{env}-github-actions` role (`iam.tf`) is what the Terraform CI workflows (`terraform-staging.yml`, `terraform-prod.yml`) assume to run `plan`/`apply`. Its policies today only cover the **site** S3 bucket, CloudFront invalidation, and the Secrets Manager secret (`iam.tf:33-88`) — none of them grant access to the state backend (`adventus-tf-state-fe` / `adventus-tf-lock-fe`). Without that access, `terraform init`/`plan`/`apply` run from GitHub Actions will fail with `AccessDenied` on the state bucket and lock table.
+
+Until this is added as a managed policy in `iam.tf`, attach it manually (once, per role) so CI-driven Terraform runs work:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::adventus-tf-state-fe"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::adventus-tf-state-fe/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"],
+      "Resource": "arn:aws:dynamodb:ap-southeast-1:*:table/adventus-tf-lock-fe"
+    }
+  ]
+}
+```
+
+Attach this to **both** `frontend-staging-github-actions` and `frontend-prod-github-actions` — they share the same backend bucket/table. Longer-term, this should move into `iam.tf` as an `aws_iam_role_policy` so it's tracked as code like the other role policies.
 
 ## Init / Plan / Apply
 
@@ -191,6 +237,9 @@ The Terraform workflows reuse the same IAM role as the deploy workflows and need
 ```bash
 gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env staging
 gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env prod
+
+gh variable set TF_LOCK_TABLE --body "adventus-tf-lock-fe" --env staging
+gh variable set TF_LOCK_TABLE --body "adventus-tf-lock-fe" --env prod
 ```
 
 > The `STAGING_AWS_ROLE_ARN` / `PROD_AWS_ROLE_ARN` roles are shared between deploy and Terraform workflows. They need permissions to create/manage IAM, S3, CloudFront, and Secrets Manager resources.
@@ -199,9 +248,9 @@ gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env prod
 
 ### First-time setup
 
-1. Bootstrap remote state (S3 bucket + DynamoDB table)
+1. Bootstrap remote state (S3 bucket + DynamoDB table) — manual, see [Remote State Bootstrap](#remote-state-bootstrap)
 2. Create Terraform admin IAM roles for staging and prod
-3. Set `TF_*` GitHub secrets
+3. Set `TF_*` GitHub environment variables (`TF_STATE_BUCKET`, `TF_LOCK_TABLE`)
 4. Run `terraform apply -var-file=staging.tfvars`
 5. Create GitHub environments (`staging`, `prod`) and set variables from Terraform outputs
 6. Push to `staging` branch — deploy workflow runs automatically
@@ -246,6 +295,7 @@ All values are stored as **environment variables** (`vars.*`) under each GitHub 
 |---|---|
 | `STAGING_AWS_ROLE_ARN` / `PROD_AWS_ROLE_ARN` | IAM role (shared with deploy workflow) |
 | `TF_STATE_BUCKET` | S3 bucket for Terraform remote state (`adventus-tf-state-fe`) |
+| `TF_LOCK_TABLE` | DynamoDB table for Terraform state locking |
 | `AWS_REGION` | AWS region (`ap-southeast-1`) |
 
 ## Teardown

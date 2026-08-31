@@ -16,6 +16,7 @@ jobs:
   deploy:
     name: Build & Deploy to Production
     runs-on: ubuntu-latest
+    environment: prod
 
     steps:
       - name: Checkout code
@@ -33,19 +34,27 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ vars.PROD_API_BASE_URL }}
+
+      - name: Debug OIDC token
+        run: |
+          echo "Repo: ${{ github.repository }}"
+          echo "Ref: ${{ github.ref }}"
+          OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com")
+          echo "$OIDC_TOKEN" | jq -r '.value' | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{sub, aud, iss, repo, ref}'
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.PROD_AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Deploy to S3
-        run: aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET }} --delete
+        run: aws s3 sync dist/ s3://${{ vars.PROD_S3_BUCKET }} --delete
 
       - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.PROD_CLOUDFRONT_DISTRIBUTION_ID }} \
+            --distribution-id ${{ vars.PROD_CLOUDFRONT_DISTRIBUTION_ID }} \
             --paths "/*"
