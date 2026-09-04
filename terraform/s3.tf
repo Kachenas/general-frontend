@@ -2,6 +2,12 @@
 
 resource "aws_s3_bucket" "site" {
   bucket = var.bucket_name
+
+  # Versioning is enabled below, so without this, `terraform destroy` fails
+  # with BucketNotEmpty even when the bucket "looks" empty — old object
+  # versions and delete markers remain unless force_destroy tells Terraform
+  # to purge them first.
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_versioning" "site" {

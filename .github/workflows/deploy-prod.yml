@@ -3,7 +3,7 @@ name: Deploy to Production
 on:
   push:
     branches:
-      - production
+      - main
 
 env:
   NODE_VERSION: '22'
@@ -16,7 +16,7 @@ jobs:
   deploy:
     name: Build & Deploy to Production
     runs-on: ubuntu-latest
-    environment: prod
+    environment: production
 
     steps:
       - name: Checkout code

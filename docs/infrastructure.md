@@ -97,7 +97,7 @@ This project uses GitHub **environment variables** (`vars.*`) for all configurat
 | `TF_STATE_BUCKET` | `adventus-tf-state-fe` | Terraform |
 | `TF_LOCK_TABLE` | `adventus-tf-lock-fe` | Terraform |
 
-### Current prod environment variables
+### Current production environment variables
 
 | Variable | Value | Used by |
 |---|---|---|
@@ -176,7 +176,7 @@ Until this is added as a managed policy in `iam.tf`, attach it manually (once, p
 }
 ```
 
-Attach this to **both** `frontend-staging-github-actions` and `frontend-prod-github-actions` — they share the same backend bucket/table. Longer-term, this should move into `iam.tf` as an `aws_iam_role_policy` so it's tracked as code like the other role policies.
+Attach this to **both** `frontend-staging-github-actions` and `frontend-production-github-actions` — they share the same backend bucket/table. Longer-term, this should move into `iam.tf` as an `aws_iam_role_policy` so it's tracked as code like the other role policies.
 
 ## Init / Plan / Apply
 
@@ -206,14 +206,14 @@ terraform init -reconfigure \
 
 ```bash
 terraform plan -var-file=staging.tfvars
-terraform plan -var-file=prod.tfvars
+terraform plan -var-file=production.tfvars
 ```
 
 ### Apply
 
 ```bash
 terraform apply -var-file=staging.tfvars
-terraform apply -var-file=prod.tfvars
+terraform apply -var-file=production.tfvars
 ```
 
 ## Resources Created
@@ -269,15 +269,15 @@ gh variable set STAGING_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -r
 gh variable set STAGING_API_BASE_URL --body "http://adventus-staging-alb-1170099516.ap-southeast-1.elb.amazonaws.com/api" --env staging
 gh variable set AWS_REGION --body "ap-southeast-1" --env staging
 
-# Switch to prod
+# Switch to production
 terraform init -reconfigure -backend-config="..." # see Init section
 
-# Set prod variables (under the "prod" GitHub environment)
-gh variable set PROD_AWS_ROLE_ARN --body "$(terraform output -raw iam_role_arn)" --env prod
-gh variable set PROD_S3_BUCKET --body "$(terraform output -raw s3_bucket_name)" --env prod
-gh variable set PROD_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -raw cloudfront_distribution_id)" --env prod
-gh variable set PROD_API_BASE_URL --body "https://api.example.com/api" --env prod
-gh variable set AWS_REGION --body "ap-southeast-1" --env prod
+# Set production variables (under the "production" GitHub environment)
+gh variable set PROD_AWS_ROLE_ARN --body "$(terraform output -raw iam_role_arn)" --env production
+gh variable set PROD_S3_BUCKET --body "$(terraform output -raw s3_bucket_name)" --env production
+gh variable set PROD_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -raw cloudfront_distribution_id)" --env production
+gh variable set PROD_API_BASE_URL --body "https://api.example.com/api" --env production
+gh variable set AWS_REGION --body "ap-southeast-1" --env production
 ```
 
 ### Terraform workflow variables
@@ -286,20 +286,20 @@ The Terraform workflows reuse the same IAM role as the deploy workflows and need
 
 ```bash
 gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env staging
-gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env prod
+gh variable set TF_STATE_BUCKET --body "adventus-tf-state-fe" --env production
 
 gh variable set TF_LOCK_TABLE --body "adventus-tf-lock-fe" --env staging
-gh variable set TF_LOCK_TABLE --body "adventus-tf-lock-fe" --env prod
+gh variable set TF_LOCK_TABLE --body "adventus-tf-lock-fe" --env production
 ```
 
-> The `STAGING_AWS_ROLE_ARN` / `PROD_AWS_ROLE_ARN` roles are shared between deploy and Terraform workflows. They need permissions to create/manage IAM, S3, CloudFront, and Secrets Manager resources.
+> The `STAGING_AWS_ROLE_ARN` / `PROD_AWS_ROLE_ARN` roles are shared between deploy and Terraform workflows. They need permissions to create/manage IAM, S3, CloudFront, and Secrets Manager resources. (Variable *names* keep the `PROD_` prefix — only the `--env` target changed from `prod` to `production`.)
 
 ## Deployment Flow
 
 ### First-time setup
 
 1. Bootstrap remote state (S3 bucket + DynamoDB table) — manual, see [Remote State Bootstrap](#remote-state-bootstrap)
-2. Create Terraform admin IAM roles for staging and prod
+2. Create Terraform admin IAM roles for staging and production
 3. Set `TF_*` GitHub environment variables (`TF_STATE_BUCKET`, `TF_LOCK_TABLE`)
 4. Run `terraform apply -var-file=staging.tfvars`
 5. Create GitHub environments (`staging`, `prod`) and set variables from Terraform outputs
@@ -359,7 +359,7 @@ cd terraform
 terraform init -reconfigure -backend-config="..." # see Init section
 
 # Destroy
-terraform destroy -var-file=staging.tfvars   # or prod.tfvars
+terraform destroy -var-file=staging.tfvars   # or production.tfvars
 ```
 
 Or use the GitHub Actions workflow: run **Terraform — Staging** (or Production) with the `destroy` action.

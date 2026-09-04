@@ -1,15 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '@/views/HomeView.vue'
+import { routes } from '@/router/routes'
+import { authGuard } from '@/guards/authGuard'
 
 const router = createRouter({
   history: createWebHistory(),
-  routes: [
-    {
-      path: '/',
-      name: 'home',
-      component: HomeView,
-    },
-  ],
+  routes,
 })
+
+router.beforeEach(authGuard)
 
 export default router

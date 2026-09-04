@@ -18,14 +18,20 @@ permissions:
 
 env:
   TF_DIR: terraform
-  TF_VAR_FILE: prod.tfvars
+  TF_VAR_FILE: production.tfvars
+  # State key intentionally left as "frontend/prod/..." even though the
+  # environment/tfvars naming moved to "production" — if this environment
+  # has already been applied under this key, changing it here would point
+  # Terraform at an empty state and risk trying to recreate everything.
+  # Rename this only after confirming (e.g. via `terraform state list`
+  # against the current key) that there's nothing real to orphan.
   TF_STATE_KEY: frontend/prod/terraform.tfstate
 
 jobs:
   terraform:
-    name: Terraform ${{ github.event.inputs.action }} (prod)
+    name: Terraform ${{ github.event.inputs.action }} (production)
     runs-on: ubuntu-latest
-    environment: prod
+    environment: production
 
     defaults:
       run:
